@@ -6,6 +6,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/otiai10/copy"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -50,6 +52,13 @@ func goAndroidBind(gobind string, pkgs []*packages.Package, androidArchs []strin
 		return err
 	}
 
+	if bindJavaGoPkg != "" {
+		err := changeJavaGoPackage()
+		if err != nil {
+			return err
+		}
+	}
+
 	androidDir := filepath.Join(tmpdir, "android")
 
 	// Generate binding code and java source code only when processing the first package.
@@ -69,7 +78,7 @@ func goAndroidBind(gobind string, pkgs []*packages.Package, androidArchs []strin
 			"./gobind",
 			env,
 			"-buildmode=c-shared",
-			"-o="+filepath.Join(androidDir, "src/main/jniLibs/"+toolchain.abi+"/libgojni.so"),
+			"-o="+filepath.Join(androidDir, "src/main/jniLibs/"+toolchain.abi+"/lib"+bindJNIName+".so"),
 		)
 		if err != nil {
 			return err
@@ -160,7 +169,11 @@ func buildAAR(srcDir, androidDir string, pkgs []*packages.Package, androidArchs 
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(w, `-keep class go.** { *; }`)
+	if bindJavaGoPkg == "" {
+		fmt.Fprintln(w, `-keep class go.** { *; }`)
+	} else if bindJavaPkg != bindJavaGoPkg {
+		fmt.Fprintln(w, fmt.Sprintf(`-keep class %s.** { *; }`, bindJavaGoPkg))
+	}
 	if bindJavaPkg != "" {
 		fmt.Fprintln(w, `-keep class `+bindJavaPkg+`.** { *; }`)
 	} else {
@@ -224,7 +237,7 @@ func buildAAR(srcDir, androidDir string, pkgs []*packages.Package, androidArchs 
 
 	for _, arch := range androidArchs {
 		toolchain := ndk.Toolchain(arch)
-		lib := toolchain.abi + "/libgojni.so"
+		lib := toolchain.abi + "/lib" + bindJNIName + ".so"
 		w, err = aarwcreate("jni/" + lib)
 		if err != nil {
 			return err
@@ -268,6 +281,19 @@ func buildJar(w io.Writer, srcDir string) error {
 		err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
+			}
+			if bindJNIName != "gojni" && strings.HasSuffix(path, "Seq.java") {
+				bs, err := ioutil.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				loadLibrary := `System.loadLibrary("gojni");`
+				replaceLoadLibrary := `System.loadLibrary("` + bindJNIName + `");`
+				bs = bytes.Replace(bs, []byte(loadLibrary), []byte(replaceLoadLibrary), 1)
+				err = ioutil.WriteFile(path, bs, os.ModePerm)
+				if err != nil {
+					return err
+				}
 			}
 			if filepath.Ext(path) == ".java" {
 				srcFiles = append(srcFiles, filepath.Join(".", path[len(srcDir):]))
@@ -399,4 +425,56 @@ func androidAPIPath() (string, error) {
 			buildAndroidAPI, sdkDir.Name())
 	}
 	return apiPath, nil
+}
+
+func changeJavaGoPackage() error {
+	// replace jni method prefix
+	srcDirPath := filepath.Join(tmpdir, "src")
+	javaGoPkgFormat1 := strings.Replace(bindJavaGoPkg, ".", "_", -1)
+	javaGoPkgFormat2 := strings.Replace(bindJavaGoPkg, ".", "/", -1)
+	err := filepath.Walk(srcDirPath, func(path string, info os.FileInfo, err error) error {
+		if strings.HasSuffix(path, "seq_android.c") || strings.HasSuffix(path, "seq_android.h") || strings.HasSuffix(path, "universe_android.c") {
+			bs, err := ioutil.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			bs = bytes.Replace(bs, []byte("Java_go_"), []byte(fmt.Sprintf("Java_%s_", javaGoPkgFormat1)), -1)
+			bs = bytes.Replace(bs, []byte("go/"), []byte(fmt.Sprintf("%s/", javaGoPkgFormat2)), -1)
+			return ioutil.WriteFile(path, bs, os.ModePerm)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// change go package
+	javaRoot := filepath.Join(tmpdir, "java")
+	err = copy.Copy(filepath.Join(javaRoot, "go"), filepath.Join(javaRoot, javaGoPkgFormat2))
+	if err != nil {
+		return err
+	}
+	err = os.RemoveAll(filepath.Join(javaRoot, "go"))
+	if err != nil {
+		return err
+	}
+	err = filepath.Walk(javaRoot, func(path string, info os.FileInfo, err error) error {
+		if strings.HasSuffix(path, ".java") {
+			bs, err := ioutil.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			bs = bytes.ReplaceAll(bs, []byte("package go;"), []byte(fmt.Sprintf("package %s;", bindJavaGoPkg)))
+			bs = bytes.ReplaceAll(bs, []byte("import go."), []byte(fmt.Sprintf("import %s.", bindJavaGoPkg)))
+			err = ioutil.WriteFile(path, bs, os.ModePerm)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }

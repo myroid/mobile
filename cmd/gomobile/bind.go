@@ -23,7 +23,7 @@ import (
 var cmdBind = &command{
 	run:   runBind,
 	Name:  "bind",
-	Usage: "[-target android|ios] [-bootclasspath <path>] [-classpath <path>] [-o output] [build flags] [package]",
+	Usage: "[-target android|ios] [-jniname jniname] [-javagopkg package] [-bootclasspath <path>] [-classpath <path>] [-o output] [build flags] [package]",
 	Short: "build a library for Android and iOS",
 	Long: `
 Bind generates language bindings for the package named by the import
@@ -60,6 +60,10 @@ For -target android, the -bootclasspath and -classpath flags are used to
 control the bootstrap classpath and the classpath for Go wrappers to Java
 classes.
 
+For -target android, the -jniname flag is used to custom JNI name.
+
+For -target android, the -javagopkg flag is used to custom Java Go package name.
+
 The -v flag provides verbose output, including the list of packages built.
 
 The build flags -a, -n, -x, -gcflags, -ldflags, -tags, -trimpath, and -work
@@ -81,6 +85,9 @@ func runBind(cmd *command) error {
 		return fmt.Errorf(`invalid -target=%q: %v`, buildTarget, err)
 	}
 
+	if bindJNIName == "" && targetOS == "android" {
+		bindJNIName = "gojni"
+	}
 	if bindJavaPkg != "" && targetOS != "android" {
 		return fmt.Errorf("-javapkg is supported only for android target")
 	}
@@ -142,6 +149,8 @@ var (
 	bindJavaPkg       string // -javapkg
 	bindClasspath     string // -classpath
 	bindBootClasspath string // -bootclasspath
+	bindJNIName       string // -jniname
+	bindJavaGoPkg     string // -javagopkg
 )
 
 func init() {
@@ -152,6 +161,8 @@ func init() {
 		"custom Objective-C name prefix. Valid only with -target=ios.")
 	cmdBind.flag.StringVar(&bindClasspath, "classpath", "", "The classpath for imported Java classes. Valid only with -target=android.")
 	cmdBind.flag.StringVar(&bindBootClasspath, "bootclasspath", "", "The bootstrap classpath for imported Java classes. Valid only with -target=android.")
+	cmdBind.flag.StringVar(&bindJNIName, "jniname", "", "specifies custom JNI name. Valid only with -target=android.")
+	cmdBind.flag.StringVar(&bindJavaGoPkg, "javagopkg", "", "specifies custom Go package name. Valid only with -target=android.")
 }
 
 func bootClasspath() (string, error) {
