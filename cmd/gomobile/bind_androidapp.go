@@ -433,20 +433,26 @@ func changeJavaGoPackage() error {
 	javaGoPkgFormat1 := strings.Replace(bindJavaGoPkg, ".", "_", -1)
 	javaGoPkgFormat2 := strings.Replace(bindJavaGoPkg, ".", "/", -1)
 	err := filepath.Walk(srcDirPath, func(path string, info os.FileInfo, err error) error {
-		if strings.HasSuffix(path, "seq_android.c") || strings.HasSuffix(path, "seq_android.h") || strings.HasSuffix(path, "universe_android.c") {
-			bs, err := ioutil.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			bs = bytes.Replace(bs, []byte("Java_go_"), []byte(fmt.Sprintf("Java_%s_", javaGoPkgFormat1)), -1)
-			bs = bytes.Replace(bs, []byte("go/"), []byte(fmt.Sprintf("%s/", javaGoPkgFormat2)), -1)
-			return ioutil.WriteFile(path, bs, os.ModePerm)
+		// if strings.HasSuffix(path, "seq_android.c") || strings.HasSuffix(path, "seq_android.h") || strings.HasSuffix(path, "universe_android.c") {
+		if info.IsDir() {
+			return nil
 		}
-		return nil
+		bs, err := ioutil.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		bs = bytes.Replace(bs, []byte("Java_go_"), []byte(fmt.Sprintf("Java_%s_", javaGoPkgFormat1)), -1)
+		bs = bytes.Replace(bs, []byte("go_seq_"), []byte(fmt.Sprintf("%s_seq_", javaGoPkgFormat1)), -1)
+		bs = bytes.Replace(bs, []byte("GO_SEQ_"), []byte(fmt.Sprintf("%s_SEQ_", strings.ToUpper(javaGoPkgFormat1))), -1)
+		bs = bytes.Replace(bs, []byte("go/"), []byte(fmt.Sprintf("%s/", javaGoPkgFormat2)), -1)
+		return ioutil.WriteFile(path, bs, os.ModePerm)
+		// }
+		// return nil
 	})
 	if err != nil {
 		return err
 	}
+	// copy.Copy(srcDirPath, "/Users/dafan/Downloads/nkv/gomobilex/src")
 
 	// change go package
 	javaRoot := filepath.Join(tmpdir, "java")
